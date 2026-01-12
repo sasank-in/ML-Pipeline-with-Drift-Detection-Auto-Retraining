@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  # Data Ingestion API
+  ingestion-api:
+    build:
+      context: .
+      dockerfile: services/ingestion_api/Dockerfile
+    container_name: ingestion-api
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SERVICE_NAME=ingestion_api
+    restart: unless-stopped
+    networks:
+      - ml-pipeline-network
+
+  # Prediction Service
+  prediction-service:
+    build:
+      context: .
+      dockerfile: services/prediction_service/Dockerfile
+    container_name: prediction-service
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SERVICE_NAME=prediction_service
+    restart: unless-stopped
+    networks:
+      - ml-pipeline-network
+    depends_on:
+      - ingestion-api
+
+  # Drift Monitor
+  drift-monitor:
+    build:
+      context: .
+      dockerfile: services/drift_monitor/Dockerfile
+    container_name: drift-monitor
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SERVICE_NAME=drift_monitor
+    restart: unless-stopped
+    networks:
+      - ml-pipeline-network
+    depends_on:
+      - prediction-service
+
+  # Retraining Worker
+  retraining-worker:
+    build:
+      context: .
+      dockerfile: services/retraining_worker/Dockerfile
+    container_name: retraining-worker
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SERVICE_NAME=retraining_worker
+    restart: unless-stopped
+    networks:
+      - ml-pipeline-network
+    depends_on:
+      - drift-monitor
+
+  # Monitoring Dashboard
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboards/Dockerfile
+    container_name: dashboard
+    ports:
+      - "8050:8050"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SERVICE_NAME=dashboard
+    restart: unless-stopped
+    networks:
+      - ml-pipeline-network
+    depends_on:
+      - prediction-service
+
+networks:
+  ml-pipeline-network:
+    driver: bridge
+
+volumes:
+  models:
+  data:
+  logs:
