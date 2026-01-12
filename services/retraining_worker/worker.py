@@ -1,8 +1,11 @@
 """Retraining Worker - Handles model retraining jobs"""
+import sys
+import os
+# Add project root to Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+
 import time
 import uuid
-import sys
-sys.path.append('../..')
 
 from shared.config import Config
 from shared.logger import setup_logger

@@ -1,11 +1,14 @@
 """Monitoring Dashboard - Real-time visualization"""
+import sys
+import os
+# Add project root to Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output
 import plotly.graph_objs as go
 import pandas as pd
-import sys
-sys.path.append('..')
 
 from shared.config import Config
 from shared.database import DatabaseManager

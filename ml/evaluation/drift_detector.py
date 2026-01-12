@@ -1,9 +1,12 @@
 """Drift detection algorithms"""
+import sys
+import os
+# Add project root to Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+
 import numpy as np
 from scipy import stats
 from typing import Dict, Tuple, List
-import sys
-sys.path.append('../..')
 
 from shared.logger import setup_logger
 

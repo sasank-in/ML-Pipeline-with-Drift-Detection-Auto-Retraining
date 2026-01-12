@@ -1,6 +1,8 @@
 """MLFlow client for experiment tracking"""
 import sys
-sys.path.append('../..')
+import os
+# Add project root to Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from shared.logger import setup_logger
 

@@ -1,4 +1,9 @@
 """Model training module"""
+import sys
+import os
+# Add project root to Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
@@ -7,8 +12,6 @@ import joblib
 import time
 from datetime import datetime
 from typing import Dict, Tuple
-import sys
-sys.path.append('../..')
 
 from shared.logger import setup_logger
 
@@ -17,9 +20,10 @@ logger = setup_logger("model_trainer")
 class ModelTrainer:
     """Handles model training"""
     
-    def __init__(self, model_config):
-        self.config = model_config
+    def __init__(self, model_config=None, model_path="models/model.pkl"):
+        self.config = model_config if model_config else {}
         self.model = None
+        self.model_path = model_path
         
     def train(self, X: np.ndarray, y: np.ndarray) -> Tuple[Dict, str]:
         """Train a model"""
@@ -28,10 +32,10 @@ class ModelTrainer:
         
         # Create model
         self.model = RandomForestClassifier(
-            n_estimators=self.config.n_estimators,
-            max_depth=self.config.max_depth,
-            min_samples_split=self.config.min_samples_split,
-            random_state=self.config.random_state,
+            n_estimators=self.config.get('n_estimators', 100),
+            max_depth=self.config.get('max_depth', 10),
+            min_samples_split=self.config.get('min_samples_split', 2),
+            random_state=self.config.get('random_state', 42),
             n_jobs=-1
         )
         
@@ -64,14 +68,17 @@ class ModelTrainer:
         
         return metrics, model_version
         
-    def save_model(self, path: str):
+    def save_model(self, path: str = None):
         """Save trained model"""
         if self.model is None:
             raise ValueError("No model to save")
+        
+        save_path = path or self.model_path
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
             
         joblib.dump({
             'model': self.model,
             'timestamp': datetime.now().isoformat()
-        }, path)
+        }, save_path)
         
-        logger.info(f"Model saved: {path}")
+        logger.info(f"Model saved: {save_path}")
