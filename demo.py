@@ -8,6 +8,7 @@ import numpy as np
 import requests
 import time
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 BASE_URL_INGESTION = "http://localhost:8001"
 BASE_URL_PREDICTION = "http://localhost:8002"
@@ -18,6 +19,35 @@ def print_section(title):
     print(f"  {title}")
     print("=" * 80)
 
+
+def preprocess_dataframe(df: pd.DataFrame):
+
+    df = df.copy()
+
+    df.drop_duplicates(inplace=True)
+
+    numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns
+    categorical_cols = df.select_dtypes(include=["object", "category", "bool"]).columns
+
+    for col in numeric_cols:
+        df[col] = df[col].fillna(df[col].median())
+
+    for col in categorical_cols:
+        df[col] = df[col].fillna(df[col].mode()[0])
+
+    encoders = {}
+
+    for col in categorical_cols:
+        le = LabelEncoder()
+        df[col] = le.fit_transform(df[col])
+        encoders[col] = le
+
+    scaler = StandardScaler()
+    df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
+
+    return df, encoders, scaler
+
+
 def load_lung_disease_data():
     """Load and prepare lung disease dataset"""
     print_section("LOADING LUNG DISEASE DATASET")
@@ -25,21 +55,23 @@ def load_lung_disease_data():
     try:
         # Load the CSV file
         df = pd.read_csv('data/lung_disease.csv')
-        print(f"✓ Dataset loaded: {df.shape[0]} samples, {df.shape[1]} columns")
+        print(f"Dataset loaded: {df.shape[0]} samples, {df.shape[1]} columns")
+        
+        df, encoders, scaler = preprocess_dataframe(df)
         
         # Separate features and target
-        X = df.drop('lung_disease', axis=1).values
-        y = df['lung_disease'].values
+        X = df.drop('Recovered', axis=1).values
+        y = df['Recovered'].values
+
+        feature_names = df.drop('Recovered', axis=1).columns.tolist()
         
-        feature_names = df.drop('lung_disease', axis=1).columns.tolist()
-        
-        print(f"✓ Features: {len(feature_names)}")
-        print(f"✓ Target distribution: {np.bincount(y)}")
+        print(f"Features: {len(feature_names)}")
+        print(f"Target distribution: {np.bincount(y)}")
         
         return X, y, feature_names
         
     except FileNotFoundError:
-        print("❌ lung_disease.csv not found in data/ directory")
+        print("Dataset not found in data/ directory")
         print("Creating sample dataset...")
         
         # Create sample data if file doesn't exist
@@ -50,10 +82,7 @@ def load_lung_disease_data():
         X[:, 0] = np.random.randint(35, 75, size=n_samples)  # age
         y = np.random.randint(0, 2, size=n_samples)
         
-        feature_names = ['age', 'gender', 'smoking', 'yellow_fingers', 'anxiety',
-                        'peer_pressure', 'chronic_disease', 'fatigue', 'allergy',
-                        'wheezing', 'alcohol', 'coughing', 'shortness_of_breath',
-                        'swallowing_difficulty', 'chest_pain']
+        feature_names = ['Age' ,'Gender', 'Smoking Status', 'Lung Capacity', 'Disease Type', 'Treatment Type', 'Hospital Visits']
         
         print(f"✓ Sample dataset created: {n_samples} samples")
         return X, y, feature_names

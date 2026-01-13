@@ -1,6 +1,10 @@
 """Shared configuration across all services"""
 import os
 from dataclasses import dataclass
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 @dataclass
 class DatabaseConfig:
