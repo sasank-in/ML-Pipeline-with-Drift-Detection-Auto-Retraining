@@ -1,322 +1,125 @@
-"""Complete demonstration of ML pipeline using real lung disease data"""
+"""ML Pipeline Demo - Retail Customer Value Prediction"""
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 import pandas as pd
 import numpy as np
-import requests
-import time
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 
-BASE_URL_INGESTION = "http://localhost:8001"
-BASE_URL_PREDICTION = "http://localhost:8002"
-
-def print_section(title):
-    """Print formatted section header"""
-    print("\n" + "=" * 80)
-    print(f"  {title}")
-    print("=" * 80)
+from ml.training.trainer import ModelTrainer
+from ml.evaluation.drift_detector import DriftDetector
+from shared.database import DatabaseManager
 
 
-def preprocess_dataframe(df: pd.DataFrame):
-
-    df = df.copy()
-
-    df.drop_duplicates(inplace=True)
-
-    numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns
-    categorical_cols = df.select_dtypes(include=["object", "category", "bool"]).columns
-
-    for col in numeric_cols:
-        df[col] = df[col].fillna(df[col].median())
-
-    for col in categorical_cols:
-        df[col] = df[col].fillna(df[col].mode()[0])
-
-    encoders = {}
-
-    for col in categorical_cols:
-        le = LabelEncoder()
-        df[col] = le.fit_transform(df[col])
-        encoders[col] = le
-
+def load_retail_data():
+    """Load and prepare retail dataset for customer classification"""
+    df = pd.read_csv('data/retail_data.csv')
+    print(f"Loaded: {df.shape[0]:,} transactions")
+    
+    df = df.dropna(subset=['Customer ID'])
+    df = df[(df['Quantity'] > 0) & (df['Price'] > 0)]
+    df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
+    df['TotalAmount'] = df['Quantity'] * df['Price']
+    
+    reference_date = df['InvoiceDate'].max() + pd.Timedelta(days=1)
+    
+    customer_df = df.groupby('Customer ID').agg({
+        'InvoiceDate': lambda x: (reference_date - x.max()).days,
+        'Invoice': 'nunique',
+        'TotalAmount': 'sum',
+        'Quantity': 'sum',
+        'StockCode': 'nunique',
+        'Country': 'first'
+    }).reset_index()
+    
+    customer_df.columns = ['CustomerID', 'Recency', 'Frequency', 'Monetary', 
+                           'TotalItems', 'UniqueProducts', 'Country']
+    
+    customer_df['AvgOrderValue'] = customer_df['Monetary'] / customer_df['Frequency']
+    customer_df['AvgItemsPerOrder'] = customer_df['TotalItems'] / customer_df['Frequency']
+    customer_df['AvgItemPrice'] = customer_df['Monetary'] / customer_df['TotalItems']
+    
+    monetary_threshold = customer_df['Monetary'].quantile(0.75)
+    customer_df['HighValue'] = (customer_df['Monetary'] >= monetary_threshold).astype(int)
+    
+    le = LabelEncoder()
+    customer_df['CountryEncoded'] = le.fit_transform(customer_df['Country'])
+    
+    feature_cols = ['Recency', 'Frequency', 'TotalItems', 'UniqueProducts',
+                   'AvgOrderValue', 'AvgItemsPerOrder', 'AvgItemPrice', 'CountryEncoded']
+    
+    X = customer_df[feature_cols].values
+    y = customer_df['HighValue'].values
+    
     scaler = StandardScaler()
-    df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
+    X = scaler.fit_transform(X)
+    
+    print(f"Customers: {len(X)}, Features: {len(feature_cols)}")
+    print(f"High-value: {y.sum()} ({y.mean()*100:.1f}%)")
+    
+    return X, y, feature_cols
 
-    return df, encoders, scaler
 
-
-def load_lung_disease_data():
-    """Load and prepare lung disease dataset"""
-    print_section("LOADING LUNG DISEASE DATASET")
+def run_pipeline():
+    """Run the complete ML pipeline"""
+    print("=" * 60)
+    print("RETAIL CUSTOMER VALUE PREDICTION")
+    print("=" * 60)
     
-    try:
-        # Load the CSV file
-        df = pd.read_csv('data/lung_disease.csv')
-        print(f"Dataset loaded: {df.shape[0]} samples, {df.shape[1]} columns")
-        
-        df, encoders, scaler = preprocess_dataframe(df)
-        
-        # Separate features and target
-        X = df.drop('Recovered', axis=1).values
-        y = df['Recovered'].values
-
-        feature_names = df.drop('Recovered', axis=1).columns.tolist()
-        
-        print(f"Features: {len(feature_names)}")
-        print(f"Target distribution: {np.bincount(y)}")
-        
-        return X, y, feature_names
-        
-    except FileNotFoundError:
-        print("Dataset not found in data/ directory")
-        print("Creating sample dataset...")
-        
-        # Create sample data if file doesn't exist
-        np.random.seed(42)
-        n_samples = 100
-        
-        X = np.random.randint(0, 2, size=(n_samples, 15))
-        X[:, 0] = np.random.randint(35, 75, size=n_samples)  # age
-        y = np.random.randint(0, 2, size=n_samples)
-        
-        feature_names = ['Age' ,'Gender', 'Smoking Status', 'Lung Capacity', 'Disease Type', 'Treatment Type', 'Hospital Visits']
-        
-        print(f"✓ Sample dataset created: {n_samples} samples")
-        return X, y, feature_names
-
-def check_services():
-    """Check if services are running"""
-    print_section("CHECKING SERVICES")
-    
-    services = [
-        ("Ingestion API", f"{BASE_URL_INGESTION}/health"),
-        ("Prediction Service", f"{BASE_URL_PREDICTION}/health"),
-    ]
-    
-    all_running = True
-    for name, url in services:
-        try:
-            response = requests.get(url, timeout=2)
-            if response.status_code == 200:
-                print(f"✓ {name}: Running")
-            else:
-                print(f"❌ {name}: Not responding properly")
-                all_running = False
-        except:
-            print(f"❌ {name}: Not available")
-            all_running = False
-    
-    if not all_running:
-        print("\n⚠️  Some services are not running!")
-        print("Please run: run_all_services.bat (Windows) or ./run_all_services.sh (Linux/Mac)")
-        print("Wait 10 seconds, then run this demo again.")
-        return False
-    
-    return True
-
-def ingest_training_data(X_train, y_train):
-    """Ingest training data to the pipeline"""
-    print_section("PHASE 1: INGESTING TRAINING DATA")
-    
-    print(f"Training data: {X_train.shape[0]} samples, {X_train.shape[1]} features")
-    
-    # Ingest in batches
-    batch_size = 20
-    total_batches = (len(X_train) + batch_size - 1) // batch_size
-    
-    for i in range(0, len(X_train), batch_size):
-        batch_X = X_train[i:i+batch_size]
-        batch_y = y_train[i:i+batch_size]
-        
-        try:
-            response = requests.post(
-                f"{BASE_URL_INGESTION}/ingest/batch",
-                json={
-                    'features': batch_X.tolist(),
-                    'labels': batch_y.tolist(),
-                    'batch_id': f'train_batch_{i//batch_size}'
-                },
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                print(f"✓ Batch {i//batch_size + 1}/{total_batches}: Ingested {result['samples_ingested']} samples")
-            else:
-                print(f"❌ Batch {i//batch_size + 1}: Failed - {response.text}")
-                
-        except Exception as e:
-            print(f"❌ Batch {i//batch_size + 1}: Error - {str(e)}")
-    
-    print("\n⏳ Waiting for initial model training (5 seconds)...")
-    time.sleep(5)
-
-def make_predictions(X_test, y_test, phase_name="NORMAL OPERATION"):
-    """Make predictions on test data"""
-    print_section(f"PHASE 2: {phase_name}")
-    
-    batch_size = 10
-    total_batches = (len(X_test) + batch_size - 1) // batch_size
-    
-    all_predictions = []
-    
-    for i in range(0, len(X_test), batch_size):
-        batch_X = X_test[i:i+batch_size]
-        
-        try:
-            response = requests.post(
-                f"{BASE_URL_PREDICTION}/predict",
-                json={'features': batch_X.tolist()},
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                predictions = result['predictions']
-                all_predictions.extend(predictions)
-                
-                print(f"Batch {i//batch_size + 1}/{total_batches}: "
-                      f"{len(predictions)} predictions, "
-                      f"time: {result['prediction_time']:.4f}s")
-            else:
-                print(f"❌ Batch {i//batch_size + 1}: Failed")
-                
-        except Exception as e:
-            print(f"❌ Batch {i//batch_size + 1}: Error - {str(e)}")
-        
-        time.sleep(0.5)
-    
-    # Calculate accuracy
-    if len(all_predictions) == len(y_test):
-        accuracy = np.mean(np.array(all_predictions) == y_test)
-        print(f"\n✓ Prediction Accuracy: {accuracy:.2%}")
-    
-    return all_predictions
-
-def introduce_drift(X_test, drift_amount=2.0):
-    """Introduce drift by modifying features"""
-    print_section("PHASE 3: INTRODUCING DATA DRIFT")
-    
-    print(f"Applying drift with shift amount: {drift_amount}")
-    
-    # Add noise to numeric features
-    X_drifted = X_test.copy()
-    X_drifted = X_drifted + np.random.normal(drift_amount, 0.5, X_drifted.shape)
-    
-    # Clip to valid range
-    X_drifted = np.clip(X_drifted, 0, 100)
-    
-    batch_size = 10
-    total_batches = (len(X_drifted) + batch_size - 1) // batch_size
-    
-    for i in range(0, len(X_drifted), batch_size):
-        batch_X = X_drifted[i:i+batch_size]
-        
-        try:
-            response = requests.post(
-                f"{BASE_URL_PREDICTION}/predict",
-                json={'features': batch_X.tolist()},
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                print(f"Batch {i//batch_size + 1}/{total_batches}: "
-                      f"{len(result['predictions'])} predictions (drifted data)")
-            else:
-                print(f"❌ Batch {i//batch_size + 1}: Failed")
-                
-        except Exception as e:
-            print(f"❌ Batch {i//batch_size + 1}: Error - {str(e)}")
-        
-        time.sleep(0.5)
-    
-    print("\n⏳ Waiting for drift detection and retraining (10 seconds)...")
-    time.sleep(10)
-
-def check_stats():
-    """Check ingestion statistics"""
-    print_section("PIPELINE STATISTICS")
-    
-    try:
-        response = requests.get(f"{BASE_URL_INGESTION}/stats", timeout=5)
-        if response.status_code == 200:
-            stats = response.json()
-            print(f"Batch Queue Size: {stats.get('batch_queue_size', 'N/A')}")
-            print(f"Stream Queue Size: {stats.get('stream_queue_size', 'N/A')}")
-        else:
-            print("⚠️  Could not retrieve stats")
-    except Exception as e:
-        print(f"⚠️  Stats error: {str(e)}")
-
-def main():
-    """Run complete pipeline demonstration"""
-    print("=" * 80)
-    print("  LUNG DISEASE PREDICTION - ML PIPELINE DEMONSTRATION")
-    print("=" * 80)
-    print("\nThis demo uses real lung disease data to demonstrate:")
-    print("  1. Data ingestion")
-    print("  2. Model training")
-    print("  3. Predictions")
-    print("  4. Drift detection")
-    print("  5. Auto-retraining")
-    print("=" * 80)
-    
-    # Check if services are running
-    if not check_services():
-        return
-    
-    # Load data
-    X, y, feature_names = load_lung_disease_data()
-    
-    # Split data
+    X, y, features = load_retail_data()
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.3, random_state=42, stratify=y
     )
+    print(f"\nTrain: {len(X_train)}, Test: {len(X_test)}")
     
-    print(f"\nData split:")
-    print(f"  Training: {len(X_train)} samples")
-    print(f"  Testing: {len(X_test)} samples")
+    print("\n[1] Training model...")
+    trainer = ModelTrainer(model_path="models/retail_model.pkl")
+    metrics, version = trainer.train(X_train, y_train)
+    trainer.save_model()
+    print(f"Accuracy: {metrics['accuracy']:.4f}, F1: {metrics['f1_score']:.4f}")
     
-    # Run pipeline
-    try:
-        # Phase 1: Ingest training data
-        ingest_training_data(X_train, y_train)
-        
-        # Phase 2: Make predictions
-        predictions = make_predictions(X_test, y_test, "MAKING PREDICTIONS")
-        
-        # Phase 3: Introduce drift
-        introduce_drift(X_test, drift_amount=2.0)
-        
-        # Check stats
-        check_stats()
-        
-        # Final summary
-        print_section("DEMONSTRATION COMPLETE")
-        print("\n✅ Successfully demonstrated:")
-        print("  ✓ Data ingestion")
-        print("  ✓ Model predictions")
-        print("  ✓ Drift introduction")
-        print("  ✓ Pipeline statistics")
-        
-        print("\n📊 View the dashboard at: http://localhost:8050")
-        print("📁 Check database: data/pipeline.db")
-        print("📝 Check logs: logs/")
-        
-        print("\n" + "=" * 80)
-        print("  Thank you for using the ML Pipeline!")
-        print("=" * 80)
-        
-    except KeyboardInterrupt:
-        print("\n\n⚠️  Demo interrupted by user")
-    except Exception as e:
-        print(f"\n\n❌ Demo error: {str(e)}")
-        import traceback
-        traceback.print_exc()
+    print("\n[2] Making predictions...")
+    predictions = trainer.model.predict(X_test)
+    test_accuracy = np.mean(predictions == y_test)
+    print(f"Test accuracy: {test_accuracy:.4f}")
+    
+    print("\n[3] Setting up drift detection...")
+    detector = DriftDetector(threshold=0.05)
+    detector.set_reference(X_train)
+    
+    print("\n[4] Checking for drift (normal data)...")
+    drift_detected, drift_metrics = detector.detect_drift(X_test)
+    print(f"Drift detected: {drift_detected}")
+    
+    print("\n[5] Simulating drift...")
+    X_drifted = X_test + np.random.normal(2.0, 0.5, X_test.shape)
+    drift_detected, drift_metrics = detector.detect_drift(X_drifted)
+    print(f"Drift detected: {drift_detected}")
+    
+    if drift_detected:
+        print("\n[6] Retraining on combined data...")
+        X_combined = np.vstack([X_train, X_drifted])
+        y_combined = np.hstack([y_train, y_test])
+        metrics, version = trainer.train(X_combined, y_combined)
+        trainer.save_model()
+        print(f"New accuracy: {metrics['accuracy']:.4f}")
+    
+    print("\n[7] Logging to database...")
+    db = DatabaseManager()
+    db.register_model(
+        model_version=version,
+        model_path="models/retail_model.pkl",
+        metrics=metrics,
+        status='active'
+    )
+    print("Model registered")
+    
+    print("\n" + "=" * 60)
+    print("PIPELINE COMPLETE")
+    print("=" * 60)
+
 
 if __name__ == "__main__":
-    main()
+    run_pipeline()
