@@ -5,7 +5,7 @@ Works with ANY dataset - just specify your CSV file and target column.
 
 Usage:
     python run_pipeline.py --data your_data.csv --target target_column
-    python run_pipeline.py --data data/lung_disease.csv --target Recovered
+    python run_pipeline.py --data data/your_dataset.csv --target target
     python run_pipeline.py --data sales.csv --target revenue --test-size 0.25
 """
 
@@ -180,6 +180,29 @@ def ingest_data(X_train, y_train, batch_size=20):
     time.sleep(5)
 
 
+def wait_for_model(timeout_seconds=60, interval_seconds=3):
+    """Wait for the prediction service to have a loaded model."""
+    print_section("WAITING FOR MODEL")
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout_seconds:
+        try:
+            response = requests.get(f"{BASE_URL_PREDICTION}/health", timeout=5)
+            if response.status_code == 200:
+                payload = response.json()
+                if payload.get("model_loaded"):
+                    print(f"âœ“ Model is loaded: {payload.get('model_version')}")
+                    return True
+        except Exception:
+            pass
+        
+        print("â³ Model not ready yet, waiting...")
+        time.sleep(interval_seconds)
+    
+    print("âš  Model still not ready; continuing anyway")
+    return False
+
+
 def make_predictions(X_test, y_test, batch_size=10):
     """Make predictions on test data"""
     print_section("MAKING PREDICTIONS")
@@ -329,6 +352,7 @@ Examples:
     try:
         # Ingest training data
         ingest_data(X_train, y_train, args.batch_size)
+        wait_for_model()
         
         # Make predictions
         predictions = make_predictions(X_test, y_test)

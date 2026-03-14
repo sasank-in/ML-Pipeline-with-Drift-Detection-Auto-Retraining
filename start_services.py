@@ -6,6 +6,8 @@ import time
 services = [
     ("Ingestion API", "python services/ingestion_api/app.py"),
     ("Prediction Service", "python services/prediction_service/app.py"),
+    ("Drift Monitor", "python services/drift_monitor/monitor.py"),
+    ("Retraining Worker", "python services/retraining_worker/worker.py"),
     ("Dashboard", "python dashboards/monitoring_app.py"),
 ]
 

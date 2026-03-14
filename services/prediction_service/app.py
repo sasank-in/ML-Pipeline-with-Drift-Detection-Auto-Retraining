@@ -14,7 +14,6 @@ import json
 from shared.config import Config
 from shared.logger import setup_logger
 from shared.database import DatabaseManager
-from shared.redis_client import RedisClient
 
 app = Flask(__name__)
 CORS(app)
@@ -22,43 +21,58 @@ CORS(app)
 config = Config()
 logger = setup_logger("prediction_service")
 db = DatabaseManager()
-redis_client = RedisClient(config.redis.host, config.redis.port)
 
 current_model = None
 model_version = None
+model_path = None
 total_predictions = 0
 
 BASE_STYLE = """
 <style>
-    body { font-family: Arial, sans-serif; margin: 0; background: #f5f5f5; }
-    .nav { background: #2c3e50; padding: 15px 40px; }
-    .nav a { color: white; text-decoration: none; margin-right: 20px; padding: 8px 15px; border-radius: 5px; }
-    .nav a:hover { background: #34495e; }
-    .nav a.active { background: #9b59b6; }
-    .container { max-width: 900px; margin: 30px auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-    h1 { color: #2c3e50; border-bottom: 2px solid #9b59b6; padding-bottom: 10px; margin-top: 0; }
-    .status { background: #27ae60; color: white; padding: 5px 15px; border-radius: 20px; display: inline-block; }
-    .status.warning { background: #e74c3c; }
-    .stats { display: flex; gap: 20px; margin: 20px 0; }
-    .stat-box { background: #9b59b6; color: white; padding: 20px; border-radius: 10px; text-align: center; flex: 1; }
-    .stat-box h3 { margin: 0; font-size: 14px; opacity: 0.8; }
-    .stat-box p { margin: 10px 0 0 0; font-size: 28px; font-weight: bold; }
-    .form-group { margin: 15px 0; }
-    .form-group label { display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50; }
-    textarea, input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-family: monospace; box-sizing: border-box; }
-    textarea { height: 120px; }
-    button { background: #9b59b6; color: white; border: none; padding: 12px 25px; border-radius: 5px; cursor: pointer; font-size: 14px; }
-    button:hover { background: #8e44ad; }
-    .result { background: #2c3e50; color: #2ecc71; padding: 15px; border-radius: 5px; margin-top: 15px; font-family: monospace; white-space: pre-wrap; }
-    .error { color: #e74c3c; }
-    .success { color: #2ecc71; }
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Mono&display=swap');
+    :root {
+        --ink: #0b1220;
+        --paper: #f7f4ef;
+        --violet: #7c3aed;
+        --electric: #22d3ee;
+        --amber: #f59e0b;
+        --rose: #fb7185;
+        --shadow: 0 20px 40px rgba(12, 17, 29, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body { font-family: 'Space Grotesk', sans-serif; margin: 0; background: radial-gradient(1200px 600px at 90% -10%, #efe7ff 0%, #f7f4ef 45%, #f3efe7 100%); color: var(--ink); }
+    .nav { background: linear-gradient(120deg, #0f172a 0%, #2b1d4a 60%, #0b1220 100%); padding: 16px 40px; position: sticky; top: 0; z-index: 10; }
+    .nav a { color: white; text-decoration: none; margin-right: 12px; padding: 10px 16px; border-radius: 999px; font-weight: 600; letter-spacing: 0.2px; transition: all 0.2s ease; }
+    .nav a:hover { background: rgba(255,255,255,0.12); transform: translateY(-1px); }
+    .nav a.active { background: linear-gradient(135deg, var(--violet), #4f46e5); }
+    .container { max-width: 980px; margin: 28px auto; background: rgba(255, 255, 255, 0.74); backdrop-filter: blur(8px); padding: 32px; border-radius: 18px; box-shadow: var(--shadow); border: 1px solid rgba(12, 17, 29, 0.06); animation: fadeUp 0.6s ease both; }
+    h1 { color: var(--ink); border-bottom: 3px solid var(--violet); padding-bottom: 10px; margin-top: 0; font-size: 28px; letter-spacing: 0.3px; }
+    .status { background: linear-gradient(120deg, #34d399, #10b981); color: #042019; padding: 6px 16px; border-radius: 999px; display: inline-block; font-weight: 700; }
+    .status.warning { background: linear-gradient(120deg, #f43f5e, #fb7185); color: #1f0a0a; }
+    .stats { display: flex; gap: 18px; margin: 22px 0; }
+    .stat-box { background: #0f172a; color: white; padding: 20px; border-radius: 16px; text-align: left; flex: 1; box-shadow: 0 12px 24px rgba(16, 24, 39, 0.18); animation: glowIn 0.6s ease both; }
+    .stat-box h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px; opacity: 0.7; }
+    .stat-box p { margin: 10px 0 0 0; font-size: 28px; font-weight: 700; }
+    .stat-box.alt { background: linear-gradient(135deg, #1f1147, #4c1d95); }
+    .form-group { margin: 16px 0; }
+    .form-group label { display: block; margin-bottom: 6px; font-weight: 600; color: #2b2f3a; }
+    textarea, input { width: 100%; padding: 12px; border: 1px solid rgba(12, 17, 29, 0.12); border-radius: 12px; font-family: 'IBM Plex Mono', monospace; background: white; }
+    textarea { height: 140px; }
+    button { background: linear-gradient(135deg, var(--violet), #3b82f6); color: white; border: none; padding: 12px 24px; border-radius: 12px; cursor: pointer; font-size: 14px; font-weight: 700; letter-spacing: 0.3px; box-shadow: 0 10px 20px rgba(124, 58, 237, 0.25); transition: transform 0.2s ease, box-shadow 0.2s ease; }
+    button:hover { transform: translateY(-2px); box-shadow: 0 16px 28px rgba(124, 58, 237, 0.35); }
+    .result { background: #0b1220; color: #c7f9cc; padding: 16px; border-radius: 12px; margin-top: 15px; font-family: 'IBM Plex Mono', monospace; white-space: pre-wrap; }
+    .error { color: var(--rose); }
+    .success { color: #34d399; }
     table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
-    th { background: #9b59b6; color: white; }
-    tr:hover { background: #f5f5f5; }
-    .model-info { background: #2c3e50; color: white; padding: 20px; border-radius: 10px; margin: 20px 0; }
-    .prediction-result { background: #27ae60; color: white; padding: 20px; border-radius: 10px; margin: 20px 0; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid rgba(12, 17, 29, 0.08); }
+    th { background: #111827; color: white; border-radius: 8px; }
+    tr:hover { background: rgba(124, 58, 237, 0.08); }
+    .model-info { background: linear-gradient(135deg, #111827, #1f2937); color: white; padding: 20px; border-radius: 14px; margin: 20px 0; box-shadow: 0 12px 24px rgba(16, 24, 39, 0.18); }
+    .prediction-result { background: linear-gradient(135deg, #10b981, #22d3ee); color: #052316; padding: 20px; border-radius: 14px; margin: 20px 0; }
     .prediction-result h3 { margin-top: 0; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes glowIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    @media (max-width: 900px) { .stats { flex-direction: column; } .nav { padding: 12px 18px; } .container { margin: 18px; } }
 </style>
 """
 
@@ -72,8 +86,27 @@ NAV_HTML = """
 """
 
 
-def load_model():
-    global current_model, model_version
+def load_model_from_path(path: str, version: str = None) -> bool:
+    """Load a model from disk."""
+    global current_model, model_version, model_path
+    
+    try:
+        model_data = joblib.load(path)
+        current_model = model_data['model']
+        model_path = path
+        model_version = version or os.path.basename(path).replace('.pkl', '')
+        logger.info(f"Model loaded: {model_version}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to load model: {e}")
+        return False
+
+
+def load_model() -> bool:
+    """Load active model from registry or fallback to latest file."""
+    active = db.get_active_model()
+    if active and active.get('model_path') and os.path.exists(active['model_path']):
+        return load_model_from_path(active['model_path'], active.get('model_version'))
     
     model_files = glob.glob('models/*.pkl')
     if not model_files:
@@ -81,16 +114,20 @@ def load_model():
         return False
     
     latest_model = max(model_files, key=os.path.getmtime)
+    return load_model_from_path(latest_model)
+
+
+def maybe_reload_model():
+    """Reload model if a new deployed version exists."""
+    active = db.get_active_model()
+    if not active:
+        return
     
-    try:
-        model_data = joblib.load(latest_model)
-        current_model = model_data['model']
-        model_version = os.path.basename(latest_model).replace('.pkl', '')
-        logger.info(f"Model loaded: {model_version}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to load model: {e}")
-        return False
+    active_version = active.get('model_version')
+    active_path = active.get('model_path')
+    
+    if active_version and active_path and active_version != model_version and os.path.exists(active_path):
+        load_model_from_path(active_path, active_version)
 
 
 @app.route('/', methods=['GET'])
@@ -114,7 +151,7 @@ def index():
                     <h3>Total Predictions</h3>
                     <p>{total_predictions}</p>
                 </div>
-                <div class="stat-box" style="background: #3498db;">
+                <div class="stat-box alt">
                     <h3>Model Version</h3>
                     <p style="font-size: 16px;">{model_version or 'None'}</p>
                 </div>
@@ -186,6 +223,7 @@ def predict():
     result_html = ""
     
     if request.method == 'POST':
+        maybe_reload_model()
         if current_model is None:
             load_model()
         
@@ -219,6 +257,12 @@ def predict():
                         probability=float(prob.max()),
                         model_version=model_version
                     )
+                
+                # Buffer full batch for drift monitoring
+                db.enqueue('prediction_buffer', {
+                    'features': X.tolist(),
+                    'timestamp': time.time()
+                })
                 
                 response = {
                     'status': 'success',

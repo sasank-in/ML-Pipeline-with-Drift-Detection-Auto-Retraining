@@ -134,6 +134,15 @@ class DatabaseManager:
                     feature_group TEXT
                 )
             """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS queues (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    queue_name TEXT,
+                    payload JSONB
+                )
+            """)
             
         else:
             # SQLite table creation
@@ -200,6 +209,15 @@ class DatabaseManager:
                     feature_value REAL,
                     entity_id TEXT,
                     feature_group TEXT
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS queues (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    queue_name TEXT,
+                    payload TEXT
                 )
             """)
         
@@ -414,3 +432,86 @@ class DatabaseManager:
         conn.commit()
         conn.close()
         logger.info(f"Model deployed: {model_version}")
+
+    def enqueue(self, queue_name: str, payload: Dict):
+        """Enqueue a payload for a named queue (cross-process safe via DB)."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        if self.use_postgres:
+            cursor.execute("""
+                INSERT INTO queues (queue_name, payload)
+                VALUES (%s, %s)
+            """, (queue_name, json.dumps(payload)))
+        else:
+            cursor.execute("""
+                INSERT INTO queues (queue_name, payload)
+                VALUES (?, ?)
+            """, (queue_name, json.dumps(payload)))
+        
+        conn.commit()
+        conn.close()
+
+    def dequeue(self, queue_name: str) -> Optional[Dict]:
+        """Dequeue the oldest payload for a named queue."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        if self.use_postgres:
+            cursor.execute("""
+                SELECT id, payload
+                FROM queues
+                WHERE queue_name = %s
+                ORDER BY id ASC
+                LIMIT 1
+            """, (queue_name,))
+        else:
+            cursor.execute("""
+                SELECT id, payload
+                FROM queues
+                WHERE queue_name = ?
+                ORDER BY id ASC
+                LIMIT 1
+            """, (queue_name,))
+        
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return None
+        
+        queue_id = row[0]
+        payload = row[1]
+        
+        if self.use_postgres:
+            cursor.execute("DELETE FROM queues WHERE id = %s", (queue_id,))
+        else:
+            cursor.execute("DELETE FROM queues WHERE id = ?", (queue_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        if isinstance(payload, str):
+            return json.loads(payload)
+        return payload
+
+    def get_queue_length(self, queue_name: str) -> int:
+        """Get current length of a named queue."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        if self.use_postgres:
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM queues
+                WHERE queue_name = %s
+            """, (queue_name,))
+        else:
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM queues
+                WHERE queue_name = ?
+            """, (queue_name,))
+        
+        count = cursor.fetchone()[0]
+        conn.close()
+        return int(count)

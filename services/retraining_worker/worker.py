@@ -10,14 +10,12 @@ import uuid
 from shared.config import Config
 from shared.logger import setup_logger
 from shared.database import DatabaseManager
-from shared.redis_client import RedisClient
 from ml.training.trainer import ModelTrainer
 from registry.mlflow.mlflow_client import MLFlowClient
 
 logger = setup_logger("retraining_worker")
 config = Config()
 db = DatabaseManager()
-redis_client = RedisClient(config.redis.host, config.redis.port)
 mlflow_client = MLFlowClient(config.mlflow.tracking_uri, config.mlflow.experiment_name)
 
 class RetrainingWorker:
@@ -77,6 +75,7 @@ class RetrainingWorker:
                 metrics=metrics,
                 status='trained'
             )
+            db.deploy_model(model_version)
             
             # Log success
             db.log_training_job(
@@ -94,12 +93,6 @@ class RetrainingWorker:
             logger.info(f"✅ Retraining completed: {model_version}, "
                        f"Accuracy: {metrics['accuracy']:.4f}")
             
-            # Notify prediction service to reload model
-            redis_client.set('model_update', {
-                'version': model_version,
-                'timestamp': time.time()
-            })
-            
         except Exception as e:
             logger.error(f"Retraining failed: {str(e)}")
             db.log_training_job(job_id=job_id, status='failed')
@@ -114,7 +107,7 @@ class RetrainingWorker:
         
         # Get recent data
         for _ in range(config.drift.window_size):
-            item = redis_client.rpop('data_queue')
+            item = db.dequeue('data_queue')
             if item:
                 data_buffer.extend(item['features'])
                 if item.get('labels'):
@@ -136,12 +129,18 @@ class RetrainingWorker:
         while self.running:
             try:
                 # Check for jobs
-                job_data = redis_client.rpop('retraining_queue')
+                job_data = db.dequeue('retraining_queue')
                 
                 if job_data:
                     self.process_job(job_data)
-                else:
-                    time.sleep(10)  # Wait for jobs
+                    continue
+                
+                # Bootstrap training if no active model and data is available
+                if db.get_active_model() is None:
+                    bootstrap_job = {'trigger': 'bootstrap', 'timestamp': time.time()}
+                    self.process_job(bootstrap_job)
+                
+                time.sleep(10)  # Wait for jobs
                     
             except Exception as e:
                 logger.error(f"Worker error: {str(e)}")

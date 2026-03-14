@@ -11,7 +11,6 @@ import json
 from shared.config import Config
 from shared.logger import setup_logger
 from shared.database import DatabaseManager
-from shared.redis_client import RedisClient
 
 app = Flask(__name__)
 CORS(app)
@@ -19,35 +18,50 @@ CORS(app)
 config = Config()
 logger = setup_logger("ingestion_api")
 db = DatabaseManager()
-redis_client = RedisClient(config.redis.host, config.redis.port)
 
 BASE_STYLE = """
 <style>
-    body { font-family: Arial, sans-serif; margin: 0; background: #f5f5f5; }
-    .nav { background: #2c3e50; padding: 15px 40px; }
-    .nav a { color: white; text-decoration: none; margin-right: 20px; padding: 8px 15px; border-radius: 5px; }
-    .nav a:hover { background: #34495e; }
-    .nav a.active { background: #3498db; }
-    .container { max-width: 900px; margin: 30px auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-    h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 0; }
-    .status { background: #27ae60; color: white; padding: 5px 15px; border-radius: 20px; display: inline-block; }
-    .stats { display: flex; gap: 20px; margin: 20px 0; }
-    .stat-box { background: #3498db; color: white; padding: 20px; border-radius: 10px; text-align: center; flex: 1; }
-    .stat-box h3 { margin: 0; font-size: 14px; opacity: 0.8; }
-    .stat-box p { margin: 10px 0 0 0; font-size: 28px; font-weight: bold; }
-    .form-group { margin: 15px 0; }
-    .form-group label { display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50; }
-    textarea, input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-family: monospace; box-sizing: border-box; }
-    textarea { height: 120px; }
-    button { background: #3498db; color: white; border: none; padding: 12px 25px; border-radius: 5px; cursor: pointer; font-size: 14px; }
-    button:hover { background: #2980b9; }
-    .result { background: #2c3e50; color: #2ecc71; padding: 15px; border-radius: 5px; margin-top: 15px; font-family: monospace; white-space: pre-wrap; }
-    .error { color: #e74c3c; }
-    .success { color: #2ecc71; }
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Mono&display=swap');
+    :root {
+        --ink: #0b1220;
+        --paper: #f7f4ef;
+        --aqua: #00c2b3;
+        --sun: #ffb703;
+        --coral: #ff6b6b;
+        --slate: #223249;
+        --glass: rgba(255, 255, 255, 0.72);
+        --shadow: 0 20px 40px rgba(12, 17, 29, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body { font-family: 'Space Grotesk', sans-serif; margin: 0; background: radial-gradient(1200px 600px at 10% -10%, #dff7f2 0%, #f7f4ef 45%, #f3efe7 100%); color: var(--ink); }
+    .nav { background: linear-gradient(120deg, #101827 0%, #1d2d44 60%, #0b1220 100%); padding: 16px 40px; position: sticky; top: 0; z-index: 10; }
+    .nav a { color: white; text-decoration: none; margin-right: 12px; padding: 10px 16px; border-radius: 999px; font-weight: 600; letter-spacing: 0.2px; transition: all 0.2s ease; }
+    .nav a:hover { background: rgba(255,255,255,0.12); transform: translateY(-1px); }
+    .nav a.active { background: linear-gradient(135deg, var(--aqua), #00a6ff); }
+    .container { max-width: 980px; margin: 28px auto; background: var(--glass); backdrop-filter: blur(8px); padding: 32px; border-radius: 18px; box-shadow: var(--shadow); border: 1px solid rgba(12, 17, 29, 0.06); animation: fadeUp 0.6s ease both; }
+    h1 { color: var(--ink); border-bottom: 3px solid var(--aqua); padding-bottom: 10px; margin-top: 0; font-size: 28px; letter-spacing: 0.3px; }
+    .status { background: linear-gradient(120deg, #1dd3b0, #06d6a0); color: #042019; padding: 6px 16px; border-radius: 999px; display: inline-block; font-weight: 700; }
+    .stats { display: flex; gap: 18px; margin: 22px 0; }
+    .stat-box { background: #101827; color: white; padding: 20px; border-radius: 16px; text-align: left; flex: 1; box-shadow: 0 12px 24px rgba(16, 24, 39, 0.18); animation: glowIn 0.6s ease both; }
+    .stat-box h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px; opacity: 0.7; }
+    .stat-box p { margin: 10px 0 0 0; font-size: 28px; font-weight: 700; }
+    .stat-box.alt { background: linear-gradient(135deg, #003049, #1f6f8b); }
+    .form-group { margin: 16px 0; }
+    .form-group label { display: block; margin-bottom: 6px; font-weight: 600; color: var(--slate); }
+    textarea, input { width: 100%; padding: 12px; border: 1px solid rgba(12, 17, 29, 0.12); border-radius: 12px; font-family: 'IBM Plex Mono', monospace; background: white; }
+    textarea { height: 140px; }
+    button { background: linear-gradient(135deg, var(--aqua), #3a86ff); color: white; border: none; padding: 12px 24px; border-radius: 12px; cursor: pointer; font-size: 14px; font-weight: 700; letter-spacing: 0.3px; box-shadow: 0 10px 20px rgba(0, 194, 179, 0.2); transition: transform 0.2s ease, box-shadow 0.2s ease; }
+    button:hover { transform: translateY(-2px); box-shadow: 0 16px 28px rgba(0, 194, 179, 0.3); }
+    .result { background: #0b1220; color: #c7f9cc; padding: 16px; border-radius: 12px; margin-top: 15px; font-family: 'IBM Plex Mono', monospace; white-space: pre-wrap; }
+    .error { color: var(--coral); }
+    .success { color: #1dd3b0; }
     table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
-    th { background: #3498db; color: white; }
-    tr:hover { background: #f5f5f5; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid rgba(12, 17, 29, 0.08); }
+    th { background: #101827; color: white; border-radius: 8px; }
+    tr:hover { background: rgba(0, 194, 179, 0.08); }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes glowIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    @media (max-width: 900px) { .stats { flex-direction: column; } .nav { padding: 12px 18px; } .container { margin: 18px; } }
 </style>
 """
 
@@ -63,8 +77,8 @@ NAV_HTML = """
 
 @app.route('/', methods=['GET'])
 def index():
-    batch_queue = redis_client.llen('data_queue')
-    stream_queue = redis_client.llen('stream_queue')
+    batch_queue = db.get_queue_length('data_queue')
+    stream_queue = db.get_queue_length('stream_queue')
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -81,7 +95,7 @@ def index():
                     <h3>Batch Queue Size</h3>
                     <p>{batch_queue}</p>
                 </div>
-                <div class="stat-box" style="background: #9b59b6;">
+                <div class="stat-box alt">
                     <h3>Stream Queue Size</h3>
                     <p>{stream_queue}</p>
                 </div>
@@ -140,8 +154,8 @@ def health_check():
 
 @app.route('/stats', methods=['GET'])
 def get_stats():
-    batch_queue = redis_client.llen('data_queue')
-    stream_queue = redis_client.llen('stream_queue')
+    batch_queue = db.get_queue_length('data_queue')
+    stream_queue = db.get_queue_length('stream_queue')
     
     if request.headers.get('Accept', '').find('application/json') != -1:
         return jsonify({'status': 'success', 'batch_queue_size': batch_queue, 'stream_queue_size': stream_queue})
@@ -159,7 +173,7 @@ def get_stats():
                     <h3>Batch Queue Size</h3>
                     <p>{batch_queue}</p>
                 </div>
-                <div class="stat-box" style="background: #9b59b6;">
+                <div class="stat-box alt">
                     <h3>Stream Queue Size</h3>
                     <p>{stream_queue}</p>
                 </div>
@@ -193,7 +207,7 @@ def ingest_batch():
                 result_html = '<div class="result error">Error: Features must be 2D array</div>'
             else:
                 batch_data = {'features': X.tolist(), 'labels': y, 'batch_id': data.get('batch_id')}
-                redis_client.lpush('data_queue', batch_data)
+                db.enqueue('data_queue', batch_data)
                 logger.info(f"Ingested batch: {X.shape[0]} samples")
                 
                 response = {'status': 'success', 'samples_ingested': X.shape[0], 'batch_id': data.get('batch_id')}
@@ -259,7 +273,7 @@ def ingest_stream():
                 result_html = '<div class="result error">Error: Features must be a list</div>'
             else:
                 stream_data = {'features': features, 'label': label}
-                redis_client.lpush('stream_queue', stream_data)
+                db.enqueue('stream_queue', stream_data)
                 
                 response = {'status': 'success', 'message': 'Sample ingested'}
                 if request.is_json:

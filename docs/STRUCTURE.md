@@ -52,7 +52,7 @@ ml-pipeline/
 │       └── mlflow_client.py    # MLFlow integration
 │
 ├── data/                        # Data Files
-│   ├── lung_disease.csv        # Sample dataset
+│   ├── retail_data.csv         # Demo dataset (used by demo.py)
 │   └── pipeline.db             # SQLite database (if used)
 │
 ├── logs/                        # Service Logs
@@ -90,7 +90,7 @@ ml-pipeline/
 │
 ├── demo.py                      # Demonstration script
 ├── test_services.py             # Service tests
-└── test_postgres.py             # Database connection test
+└── (no standalone Postgres test script)
 ```
 
 ## Key Files Explained

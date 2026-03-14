@@ -22,6 +22,68 @@ db = DatabaseManager()
 app = dash.Dash(__name__)
 app.title = "ML Pipeline Monitor"
 
+STYLE_BLOCK = """
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Mono&display=swap');
+    :root {
+        --ink: #0b1220;
+        --paper: #f7f4ef;
+        --mint: #14b8a6;
+        --orange: #f97316;
+        --sky: #38bdf8;
+        --violet: #8b5cf6;
+        --shadow: 0 20px 40px rgba(12, 17, 29, 0.12);
+    }
+    body { margin: 0; font-family: 'Space Grotesk', sans-serif; background: radial-gradient(1200px 600px at 15% -10%, #e6fbf8 0%, #f7f4ef 45%, #f1ede6 100%); color: var(--ink); }
+    .nav { background: linear-gradient(120deg, #0f172a 0%, #124559 60%, #0b1220 100%); padding: 16px 36px; position: sticky; top: 0; z-index: 10; }
+    .nav a { color: white; text-decoration: none; margin-right: 12px; padding: 10px 16px; border-radius: 999px; font-weight: 600; letter-spacing: 0.2px; transition: all 0.2s ease; }
+    .nav a:hover { background: rgba(255,255,255,0.12); transform: translateY(-1px); }
+    .nav a.active { background: linear-gradient(135deg, var(--orange), #fbbf24); }
+    .page { min-height: 100vh; padding-bottom: 40px; }
+    .panel { max-width: 1200px; margin: 28px auto; background: rgba(255,255,255,0.74); backdrop-filter: blur(8px); padding: 32px; border-radius: 18px; box-shadow: var(--shadow); border: 1px solid rgba(12, 17, 29, 0.06); animation: fadeUp 0.6s ease both; }
+    .hero h1 { margin: 0 0 8px 0; font-size: 28px; border-bottom: 3px solid var(--orange); padding-bottom: 10px; }
+    .hero p { color: #4b5563; margin: 0; }
+    .stats { display: flex; gap: 18px; margin: 22px 0; }
+    .stat-card { flex: 1; background: #0f172a; color: white; padding: 20px; border-radius: 16px; box-shadow: 0 12px 24px rgba(16, 24, 39, 0.18); animation: glowIn 0.6s ease both; }
+    .stat-card h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px; opacity: 0.7; }
+    .stat-card h2 { margin: 10px 0 0 0; font-size: 28px; }
+    .stat-card.orange { background: linear-gradient(135deg, #f97316, #f59e0b); color: #1f1305; }
+    .stat-card.sky { background: linear-gradient(135deg, #0ea5e9, #38bdf8); color: #041a25; }
+    .stat-card.violet { background: linear-gradient(135deg, #7c3aed, #8b5cf6); }
+    .grid { display: flex; gap: 20px; margin: 20px 0; }
+    .card { background: #f8fafc; padding: 20px; border-radius: 14px; border: 1px solid rgba(12, 17, 29, 0.08); box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08); flex: 1; }
+    .card h2 { font-size: 18px; margin: 0 0 12px 0; }
+    .card.accent-mint { border-left: 4px solid var(--mint); }
+    .card.accent-sky { border-left: 4px solid var(--sky); }
+    .card.accent-violet { border-left: 4px solid var(--violet); }
+    .table { width: 100%; border-collapse: collapse; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes glowIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    @media (max-width: 900px) { .stats, .grid { flex-direction: column; } .panel { margin: 18px; } }
+</style>
+"""
+
+app.index_string = f"""
+<!DOCTYPE html>
+<html>
+    <head>
+        {{%metas%}}
+        <title>{{%title%}}</title>
+        {{%favicon%}}
+        {{%css%}}
+        {STYLE_BLOCK}
+    </head>
+    <body>
+        {{%app_entry%}}
+        <footer>
+            {{%config%}}
+            {{%scripts%}}
+            {{%renderer%}}
+        </footer>
+    </body>
+</html>
+"""
+
 BASE_STYLE = """
 <style>
     body { font-family: Arial, sans-serif; margin: 0; background: #f5f5f5; }
@@ -42,71 +104,70 @@ NAV_HTML = """
 
 app.layout = html.Div([
     html.Div([
-        html.A("Ingestion API", href="http://localhost:8001", target="_blank", 
-               style={'color': 'white', 'textDecoration': 'none', 'marginRight': '20px', 'padding': '8px 15px', 'borderRadius': '5px'}),
-        html.A("Prediction Service", href="http://localhost:8002", target="_blank",
-               style={'color': 'white', 'textDecoration': 'none', 'marginRight': '20px', 'padding': '8px 15px', 'borderRadius': '5px'}),
-        html.A("Dashboard", href="http://localhost:8050",
-               style={'color': 'white', 'textDecoration': 'none', 'padding': '8px 15px', 'borderRadius': '5px', 'background': '#e67e22'}),
-    ], style={'background': '#2c3e50', 'padding': '15px 40px'}),
+        html.A("Ingestion API", href="http://localhost:8001", target="_blank", className="nav-link"),
+        html.A("Prediction Service", href="http://localhost:8002", target="_blank", className="nav-link"),
+        html.A("Dashboard", href="http://localhost:8050", className="nav-link active"),
+    ], className="nav"),
     
     html.Div([
         html.Div([
-            html.H1("ML Pipeline Monitoring Dashboard", style={'color': '#2c3e50', 'borderBottom': '2px solid #e67e22', 'paddingBottom': '10px', 'marginTop': 0}),
-            html.P("Real-time monitoring of retail customer prediction system", style={'color': '#7f8c8d'}),
+            html.Div([
+                html.H1("ML Pipeline Monitoring Dashboard"),
+                html.P("Real-time monitoring of the retail customer prediction system"),
+            ], className="hero"),
             
             html.Div([
                 html.Div([
-                    html.H3("Total Predictions", style={'margin': 0, 'fontSize': '14px', 'color': '#7f8c8d', 'fontWeight': 'normal'}),
-                    html.H2(id='total-predictions', children='0', style={'margin': '10px 0 0 0', 'color': '#2c3e50', 'fontSize': '28px'})
-                ], style={'background': '#3498db', 'color': 'white', 'padding': '20px', 'borderRadius': '10px', 'textAlign': 'center', 'flex': 1}),
+                    html.H3("Total Predictions"),
+                    html.H2(id='total-predictions', children='0')
+                ], className="stat-card sky"),
                 
                 html.Div([
-                    html.H3("Drift Events", style={'margin': 0, 'fontSize': '14px', 'color': '#7f8c8d', 'fontWeight': 'normal'}),
-                    html.H2(id='drift-events', children='0', style={'margin': '10px 0 0 0', 'color': '#2c3e50', 'fontSize': '28px'})
-                ], style={'background': '#e74c3c', 'color': 'white', 'padding': '20px', 'borderRadius': '10px', 'textAlign': 'center', 'flex': 1}),
+                    html.H3("Drift Events"),
+                    html.H2(id='drift-events', children='0')
+                ], className="stat-card orange"),
                 
                 html.Div([
-                    html.H3("Models Trained", style={'margin': 0, 'fontSize': '14px', 'color': '#7f8c8d', 'fontWeight': 'normal'}),
-                    html.H2(id='retraining-count', children='0', style={'margin': '10px 0 0 0', 'color': '#2c3e50', 'fontSize': '28px'})
-                ], style={'background': '#2ecc71', 'color': 'white', 'padding': '20px', 'borderRadius': '10px', 'textAlign': 'center', 'flex': 1}),
+                    html.H3("Models Trained"),
+                    html.H2(id='retraining-count', children='0')
+                ], className="stat-card"),
                 
                 html.Div([
-                    html.H3("Latest Accuracy", style={'margin': 0, 'fontSize': '14px', 'color': '#7f8c8d', 'fontWeight': 'normal'}),
-                    html.H2(id='model-accuracy', children='N/A', style={'margin': '10px 0 0 0', 'color': '#2c3e50', 'fontSize': '28px'})
-                ], style={'background': '#9b59b6', 'color': 'white', 'padding': '20px', 'borderRadius': '10px', 'textAlign': 'center', 'flex': 1}),
-            ], style={'display': 'flex', 'gap': '20px', 'margin': '20px 0'}),
+                    html.H3("Latest Accuracy"),
+                    html.H2(id='model-accuracy', children='N/A')
+                ], className="stat-card violet"),
+            ], className="stats"),
             
             html.Div([
                 html.Div([
-                    html.H2("Prediction Distribution", style={'fontSize': '18px', 'color': '#2c3e50', 'marginBottom': '15px'}),
+                    html.H2("Prediction Distribution"),
                     dcc.Graph(id='prediction-chart', config={'displayModeBar': False}, style={'height': '350px'})
-                ], style={'background': '#ecf0f1', 'padding': '20px', 'borderRadius': '10px', 'borderLeft': '4px solid #3498db', 'flex': 1}),
+                ], className="card accent-sky"),
                 
                 html.Div([
-                    html.H2("Model Performance", style={'fontSize': '18px', 'color': '#2c3e50', 'marginBottom': '15px'}),
+                    html.H2("Model Performance"),
                     dcc.Graph(id='model-chart', config={'displayModeBar': False}, style={'height': '350px'})
-                ], style={'background': '#ecf0f1', 'padding': '20px', 'borderRadius': '10px', 'borderLeft': '4px solid #9b59b6', 'flex': 1}),
-            ], style={'display': 'flex', 'gap': '20px', 'margin': '20px 0'}),
+                ], className="card accent-violet"),
+            ], className="grid"),
             
             html.Div([
                 html.Div([
-                    html.H2("Recent Predictions", style={'fontSize': '18px', 'color': '#2c3e50', 'marginBottom': '15px'}),
+                    html.H2("Recent Predictions"),
                     html.Div(id='recent-predictions')
-                ], style={'background': '#ecf0f1', 'padding': '20px', 'borderRadius': '10px', 'borderLeft': '4px solid #3498db', 'flex': 1}),
+                ], className="card accent-sky"),
                 
                 html.Div([
-                    html.H2("System Information", style={'fontSize': '18px', 'color': '#2c3e50', 'marginBottom': '15px'}),
+                    html.H2("System Information"),
                     html.Div(id='system-info')
-                ], style={'background': '#ecf0f1', 'padding': '20px', 'borderRadius': '10px', 'borderLeft': '4px solid #2ecc71', 'flex': 1}),
-            ], style={'display': 'flex', 'gap': '20px'}),
+                ], className="card accent-mint"),
+            ], className="grid"),
             
-        ], style={'maxWidth': '1200px', 'margin': '30px auto', 'background': 'white', 'padding': '30px', 'borderRadius': '10px', 'boxShadow': '0 2px 10px rgba(0,0,0,0.1)'}),
-    ], style={'background': '#f5f5f5', 'minHeight': '100vh', 'padding': '0'}),
+        ], className="panel"),
+    ], className="page"),
     
     dcc.Interval(id='interval-component', interval=5000, n_intervals=0),
     
-], style={'fontFamily': 'Arial, sans-serif', 'margin': 0})
+], style={'margin': 0})
 
 
 @app.callback(
@@ -352,4 +413,4 @@ def update_system_info(n):
 
 if __name__ == '__main__':
     logger.info(f"Starting dashboard on port {config.service.dashboard_port}")
-    app.run_server(host='0.0.0.0', port=config.service.dashboard_port, debug=False)
+    app.run(host='0.0.0.0', port=config.service.dashboard_port, debug=False)

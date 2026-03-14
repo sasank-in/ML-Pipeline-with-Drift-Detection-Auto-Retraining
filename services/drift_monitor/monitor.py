@@ -11,13 +11,11 @@ from threading import Thread
 from shared.config import Config
 from shared.logger import setup_logger
 from shared.database import DatabaseManager
-from shared.redis_client import RedisClient
 from ml.evaluation.drift_detector import DriftDetector
 
 logger = setup_logger("drift_monitor")
 config = Config()
 db = DatabaseManager()
-redis_client = RedisClient(config.redis.host, config.redis.port)
 drift_detector = DriftDetector(config.drift.threshold, config.drift.window_size)
 
 class DriftMonitor:
@@ -26,34 +24,61 @@ class DriftMonitor:
     def __init__(self):
         self.running = False
         self.reference_data = None
+        self.feature_length = None
+
+    def _normalize_features(self, feature_rows):
+        """Ensure all feature rows have the same length."""
+        normalized = []
+        expected_len = None
+        for row in feature_rows:
+            if not isinstance(row, (list, tuple, np.ndarray)):
+                continue
+            if expected_len is None:
+                expected_len = len(row)
+            if len(row) == expected_len:
+                normalized.append(row)
+        return normalized, expected_len
         
     def load_reference_data(self):
         """Load reference data from database"""
         # In production, load from feature store
         logger.info("Loading reference data...")
-        # For now, use cached data
-        cached = redis_client.get('reference_data')
-        if cached:
-            self.reference_data = np.array(cached)
+        predictions = db.get_recent_predictions(limit=config.drift.window_size)
+        if predictions:
+            features = [p['features'] for p in predictions]
+            normalized, expected_len = self._normalize_features(features)
+            if not normalized:
+                logger.warning("Reference data invalid or empty")
+                return
+            self.feature_length = expected_len
+            self.reference_data = np.array(normalized)
             drift_detector.set_reference(self.reference_data)
             logger.info(f"Reference data loaded: {self.reference_data.shape}")
-        else:
-            logger.warning("No reference data found")
+            return
+        
+        logger.warning("No reference data found")
             
     def collect_recent_data(self) -> np.ndarray:
         """Collect recent predictions from buffer"""
         buffer = []
         
-        # Get from Redis prediction buffer
+        # Get from DB-backed prediction buffer
         for _ in range(config.drift.window_size):
-            item = redis_client.rpop('prediction_buffer')
+            item = db.dequeue('prediction_buffer')
             if item:
                 buffer.extend(item['features'])
             else:
                 break
         
         if buffer:
-            return np.array(buffer)
+            normalized, expected_len = self._normalize_features(buffer)
+            if not normalized:
+                return None
+            if self.feature_length is not None and expected_len != self.feature_length:
+                normalized = [row for row in normalized if len(row) == self.feature_length]
+                if not normalized:
+                    return None
+            return np.array(normalized)
         return None
         
     def check_drift(self):
@@ -108,7 +133,7 @@ class DriftMonitor:
             'timestamp': time.time()
         }
         
-        redis_client.lpush('retraining_queue', job_data)
+        db.enqueue('retraining_queue', job_data)
         logger.info("🔄 Retraining job triggered")
         
     def run(self):
