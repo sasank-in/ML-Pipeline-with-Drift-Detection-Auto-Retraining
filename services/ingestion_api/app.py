@@ -3,77 +3,45 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify
 from flask_cors import CORS
+from markupsafe import escape
 import numpy as np
 import json
 
 from shared.config import Config
 from shared.logger import setup_logger
 from shared.database import DatabaseManager
+from shared.auth import require_api_key
+from shared.web_ui import base_style, nav_html
 
 app = Flask(__name__)
-CORS(app)
+# Limit request body to 10 MB to prevent memory exhaustion via huge payloads.
+app.config['MAX_CONTENT_LENGTH'] = int(os.getenv('MAX_CONTENT_LENGTH', 10 * 1024 * 1024))
+# Lock CORS to configured origins; default deny-all if not set.
+_cors_origins = os.getenv('CORS_ORIGINS', '').strip()
+if _cors_origins:
+    CORS(app, origins=[o.strip() for o in _cors_origins.split(',') if o.strip()])
+else:
+    CORS(app, origins=[])
 
 config = Config()
 logger = setup_logger("ingestion_api")
 db = DatabaseManager()
 
-BASE_STYLE = """
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Mono&display=swap');
-    :root {
-        --ink: #0b1220;
-        --paper: #f7f4ef;
-        --aqua: #00c2b3;
-        --sun: #ffb703;
-        --coral: #ff6b6b;
-        --slate: #223249;
-        --glass: rgba(255, 255, 255, 0.72);
-        --shadow: 0 20px 40px rgba(12, 17, 29, 0.12);
-    }
-    * { box-sizing: border-box; }
-    body { font-family: 'Space Grotesk', sans-serif; margin: 0; background: radial-gradient(1200px 600px at 10% -10%, #dff7f2 0%, #f7f4ef 45%, #f3efe7 100%); color: var(--ink); }
-    .nav { background: linear-gradient(120deg, #101827 0%, #1d2d44 60%, #0b1220 100%); padding: 16px 40px; position: sticky; top: 0; z-index: 10; }
-    .nav a { color: white; text-decoration: none; margin-right: 12px; padding: 10px 16px; border-radius: 999px; font-weight: 600; letter-spacing: 0.2px; transition: all 0.2s ease; }
-    .nav a:hover { background: rgba(255,255,255,0.12); transform: translateY(-1px); }
-    .nav a.active { background: linear-gradient(135deg, var(--aqua), #00a6ff); }
-    .container { max-width: 980px; margin: 28px auto; background: var(--glass); backdrop-filter: blur(8px); padding: 32px; border-radius: 18px; box-shadow: var(--shadow); border: 1px solid rgba(12, 17, 29, 0.06); animation: fadeUp 0.6s ease both; }
-    h1 { color: var(--ink); border-bottom: 3px solid var(--aqua); padding-bottom: 10px; margin-top: 0; font-size: 28px; letter-spacing: 0.3px; }
-    .status { background: linear-gradient(120deg, #1dd3b0, #06d6a0); color: #042019; padding: 6px 16px; border-radius: 999px; display: inline-block; font-weight: 700; }
-    .stats { display: flex; gap: 18px; margin: 22px 0; }
-    .stat-box { background: #101827; color: white; padding: 20px; border-radius: 16px; text-align: left; flex: 1; box-shadow: 0 12px 24px rgba(16, 24, 39, 0.18); animation: glowIn 0.6s ease both; }
-    .stat-box h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px; opacity: 0.7; }
-    .stat-box p { margin: 10px 0 0 0; font-size: 28px; font-weight: 700; }
-    .stat-box.alt { background: linear-gradient(135deg, #003049, #1f6f8b); }
-    .form-group { margin: 16px 0; }
-    .form-group label { display: block; margin-bottom: 6px; font-weight: 600; color: var(--slate); }
-    textarea, input { width: 100%; padding: 12px; border: 1px solid rgba(12, 17, 29, 0.12); border-radius: 12px; font-family: 'IBM Plex Mono', monospace; background: white; }
-    textarea { height: 140px; }
-    button { background: linear-gradient(135deg, var(--aqua), #3a86ff); color: white; border: none; padding: 12px 24px; border-radius: 12px; cursor: pointer; font-size: 14px; font-weight: 700; letter-spacing: 0.3px; box-shadow: 0 10px 20px rgba(0, 194, 179, 0.2); transition: transform 0.2s ease, box-shadow 0.2s ease; }
-    button:hover { transform: translateY(-2px); box-shadow: 0 16px 28px rgba(0, 194, 179, 0.3); }
-    .result { background: #0b1220; color: #c7f9cc; padding: 16px; border-radius: 12px; margin-top: 15px; font-family: 'IBM Plex Mono', monospace; white-space: pre-wrap; }
-    .error { color: var(--coral); }
-    .success { color: #1dd3b0; }
-    table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-    th, td { padding: 12px; text-align: left; border-bottom: 1px solid rgba(12, 17, 29, 0.08); }
-    th { background: #101827; color: white; border-radius: 8px; }
-    tr:hover { background: rgba(0, 194, 179, 0.08); }
-    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-    @keyframes glowIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-    @media (max-width: 900px) { .stats { flex-direction: column; } .nav { padding: 12px 18px; } .container { margin: 18px; } }
-</style>
-"""
+BASE_STYLE = base_style()  # default aqua/blue palette suits ingestion
 
-NAV_HTML = """
-<div class="nav">
-    <a href="/" class="{home}">Home</a>
-    <a href="/health" class="{health}">Health</a>
-    <a href="/stats" class="{stats}">Stats</a>
-    <a href="/ingest/batch" class="{batch}">Batch Ingest</a>
-    <a href="/ingest/stream" class="{stream}">Stream Ingest</a>
-</div>
-"""
+_NAV_LINKS = [
+    ("/", "Home"),
+    ("/health", "Health"),
+    ("/stats", "Stats"),
+    ("/ingest/batch", "Batch Ingest"),
+    ("/ingest/stream", "Stream Ingest"),
+]
+
+
+def _nav(active: str) -> str:
+    return nav_html(_NAV_LINKS, active=active)
 
 @app.route('/', methods=['GET'])
 def index():
@@ -84,7 +52,7 @@ def index():
     <html>
     <head><title>Ingestion API - Home</title>{BASE_STYLE}</head>
     <body>
-        {NAV_HTML.format(home='active', health='', stats='', batch='', stream='')}
+        {_nav('/')}
         <div class="container">
             <h1>Data Ingestion API</h1>
             <span class="status">Running</span>
@@ -118,15 +86,24 @@ def index():
 
 @app.route('/health', methods=['GET'])
 def health_check():
+    db_ok = db.ping()
+    overall = 'healthy' if db_ok else 'degraded'
+    status_code = 200 if db_ok else 503
+    response = {
+        'status': overall,
+        'service': 'ingestion_api',
+        'version': '1.0.0',
+        'checks': {'database': 'ok' if db_ok else 'fail'},
+    }
     if request.headers.get('Accept', '').find('application/json') != -1:
-        return jsonify({'status': 'healthy', 'service': 'ingestion_api', 'version': '1.0.0'})
+        return jsonify(response), status_code
     
     html = f"""
     <!DOCTYPE html>
     <html>
     <head><title>Ingestion API - Health</title>{BASE_STYLE}</head>
     <body>
-        {NAV_HTML.format(home='', health='active', stats='', batch='', stream='')}
+        {_nav('/health')}
         <div class="container">
             <h1>Health Check</h1>
             <div class="stats">
@@ -165,7 +142,7 @@ def get_stats():
     <html>
     <head><title>Ingestion API - Stats</title>{BASE_STYLE}</head>
     <body>
-        {NAV_HTML.format(home='', health='', stats='active', batch='', stream='')}
+        {_nav('/stats')}
         <div class="container">
             <h1>Queue Statistics</h1>
             <div class="stats">
@@ -188,6 +165,7 @@ def get_stats():
 
 
 @app.route('/ingest/batch', methods=['GET', 'POST'])
+@require_api_key
 def ingest_batch():
     result_html = ""
     
@@ -200,7 +178,14 @@ def ingest_batch():
             
             X = np.array(data['features'])
             y = data.get('labels')
-            
+
+            max_rows = int(os.getenv('MAX_BATCH_ROWS', '10000'))
+            if len(X.shape) == 2 and X.shape[0] > max_rows:
+                msg = f'Batch too large: {X.shape[0]} > {max_rows}'
+                if request.is_json:
+                    return jsonify({'status': 'error', 'message': msg}), 413
+                return f'<div class="result error">Error: {msg}</div>', 413
+
             if len(X.shape) != 2:
                 if request.is_json:
                     return jsonify({'status': 'error', 'message': 'Features must be 2D array'}), 400
@@ -213,11 +198,11 @@ def ingest_batch():
                 response = {'status': 'success', 'samples_ingested': X.shape[0], 'batch_id': data.get('batch_id')}
                 if request.is_json:
                     return jsonify(response)
-                result_html = f'<div class="result success">{json.dumps(response, indent=2)}</div>'
+                result_html = f'<div class="result success">{escape(json.dumps(response, indent=2))}</div>'
         except Exception as e:
             if request.is_json:
                 return jsonify({'status': 'error', 'message': str(e)}), 500
-            result_html = f'<div class="result error">Error: {str(e)}</div>'
+            result_html = f'<div class="result error">Error: {escape(str(e))}</div>'
     
     sample_data = json.dumps({
         "features": [[0.5, -0.3, 1.2, 0.8, -0.5, 0.1, 0.9, -0.2], [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]],
@@ -230,7 +215,7 @@ def ingest_batch():
     <html>
     <head><title>Ingestion API - Batch Ingest</title>{BASE_STYLE}</head>
     <body>
-        {NAV_HTML.format(home='', health='', stats='', batch='active', stream='')}
+        {_nav('/ingest/batch')}
         <div class="container">
             <h1>Batch Data Ingestion</h1>
             <p>Ingest multiple samples at once</p>
@@ -254,6 +239,7 @@ def ingest_batch():
 
 
 @app.route('/ingest/stream', methods=['GET', 'POST'])
+@require_api_key
 def ingest_stream():
     result_html = ""
     
@@ -278,11 +264,11 @@ def ingest_stream():
                 response = {'status': 'success', 'message': 'Sample ingested'}
                 if request.is_json:
                     return jsonify(response)
-                result_html = f'<div class="result success">{json.dumps(response, indent=2)}</div>'
+                result_html = f'<div class="result success">{escape(json.dumps(response, indent=2))}</div>'
         except Exception as e:
             if request.is_json:
                 return jsonify({'status': 'error', 'message': str(e)}), 500
-            result_html = f'<div class="result error">Error: {str(e)}</div>'
+            result_html = f'<div class="result error">Error: {escape(str(e))}</div>'
     
     sample_data = json.dumps({
         "features": [0.5, -0.3, 1.2, 0.8, -0.5, 0.1, 0.9, -0.2],
@@ -294,7 +280,7 @@ def ingest_stream():
     <html>
     <head><title>Ingestion API - Stream Ingest</title>{BASE_STYLE}</head>
     <body>
-        {NAV_HTML.format(home='', health='', stats='', batch='', stream='active')}
+        {_nav('/ingest/stream')}
         <div class="container">
             <h1>Stream Data Ingestion</h1>
             <p>Ingest a single sample</p>
@@ -318,5 +304,12 @@ def ingest_stream():
 
 
 if __name__ == '__main__':
-    logger.info(f"Starting Ingestion API on port {config.service.ingestion_port}")
-    app.run(host='0.0.0.0', port=config.service.ingestion_port, debug=False)
+    port = config.service.ingestion_port
+    host = os.getenv('BIND_HOST', '127.0.0.1')
+    logger.info(f"Starting Ingestion API on {host}:{port}")
+    try:
+        from waitress import serve
+        serve(app, host=host, port=port, threads=int(os.getenv('WAITRESS_THREADS', '8')))
+    except ImportError:
+        logger.warning("waitress not installed — falling back to Flask dev server")
+        app.run(host=host, port=port, debug=False)

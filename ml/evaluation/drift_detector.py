@@ -1,9 +1,4 @@
 """Drift detection algorithms"""
-import sys
-import os
-# Add project root to Python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-
 import numpy as np
 from scipy import stats
 from typing import Dict, Tuple, List
@@ -61,32 +56,32 @@ class DriftDetector:
             ref_std = np.std(self.reference_data[:, i])
             mean_shift = abs(curr_mean - ref_mean) / (ref_std + 1e-10)
             
-            # Drift detected?
-            drift_detected = (
-                ks_pvalue < self.threshold or 
-                psi > 0.2 or 
+            # Drift detected? (cast to native bool — numpy bools break json.dumps)
+            drift_detected = bool(
+                ks_pvalue < self.threshold or
+                psi > 0.2 or
                 mean_shift > 2.0
             )
-            
+
             if drift_detected:
                 drift_count += 1
-                
+
             results['features'][feature_name] = {
                 'ks_statistic': float(ks_stat),
                 'ks_pvalue': float(ks_pvalue),
                 'psi': float(psi),
                 'mean_shift': float(mean_shift),
-                'drift_detected': drift_detected
+                'drift_detected': drift_detected,
             }
         
-        # Overall drift
-        results['overall_drift'] = drift_count > (len(self.feature_names) * 0.2)
+        # Overall drift (native bool for downstream JSON serialization)
+        results['overall_drift'] = bool(drift_count > (len(self.feature_names) * 0.2))
         results['summary'] = {
-            'total_features': len(self.feature_names),
-            'features_with_drift': drift_count,
-            'drift_percentage': (drift_count / len(self.feature_names)) * 100
+            'total_features': int(len(self.feature_names)),
+            'features_with_drift': int(drift_count),
+            'drift_percentage': float((drift_count / len(self.feature_names)) * 100),
         }
-        
+
         return results['overall_drift'], results
         
     def _calculate_psi(self, reference: np.ndarray, current: np.ndarray, bins: int = 10) -> float:

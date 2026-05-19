@@ -16,13 +16,6 @@ class DatabaseConfig:
     password: str = os.getenv("DB_PASSWORD", "postgres")
     
 @dataclass
-class RedisConfig:
-    """Redis configuration for caching and queues"""
-    host: str = os.getenv("REDIS_HOST", "localhost")
-    port: int = int(os.getenv("REDIS_PORT", "6379"))
-    db: int = int(os.getenv("REDIS_DB", "0"))
-    
-@dataclass
 class MLFlowConfig:
     """MLFlow tracking configuration"""
     tracking_uri: str = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
@@ -38,11 +31,11 @@ class ModelConfig:
     
 @dataclass
 class DriftConfig:
-    """Drift detection configuration"""
-    threshold: float = 0.05
-    window_size: int = 1000
-    min_samples: int = 100
-    check_interval: int = 300  # seconds
+    """Drift detection configuration (all env-overridable)."""
+    threshold: float = float(os.getenv("DRIFT_THRESHOLD", "0.05"))
+    window_size: int = int(os.getenv("DRIFT_WINDOW_SIZE", "1000"))
+    min_samples: int = int(os.getenv("DRIFT_MIN_SAMPLES", "100"))
+    check_interval: int = int(os.getenv("DRIFT_CHECK_INTERVAL", "300"))  # seconds
     
 @dataclass
 class ServiceConfig:
@@ -57,7 +50,6 @@ class Config:
     """Main configuration class"""
     def __init__(self):
         self.database = DatabaseConfig()
-        self.redis = RedisConfig()
         self.mlflow = MLFlowConfig()
         self.model = ModelConfig()
         self.drift = DriftConfig()

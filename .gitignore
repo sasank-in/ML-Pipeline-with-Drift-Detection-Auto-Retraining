@@ -16,6 +16,7 @@ parts/
 sdist/
 var/
 wheels/
+pip-wheel-metadata/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -24,26 +25,48 @@ wheels/
 venv/
 env/
 ENV/
+.venv/
 
+# Local secrets
 .env
+!.env.example
 
-# IDE
+# IDE / AI tooling
 .vscode/
 .idea/
+.qodo/
 *.swp
 *.swo
 *~
 
-# Project specific
+# Notebooks
+.ipynb_checkpoints/
+
+# Project artifacts
 models/*.pkl
 !models/.gitkeep
 data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
 !data/.gitkeep
 logs/*.log
 !logs/.gitkeep
 
-# Docker
-.dockerignore
+# Downloaded/built datasets (regenerate via scripts/build_seasonal_data.py)
+data/seasonal/*.xlsx
+data/seasonal/*.zip
+data/seasonal/*.csv
+data/seasonal/*.json
+!data/seasonal/.gitkeep
+
+# Scratch / smoke-test files
+_smoke*.py
+_smoketest*.py
+*.bak
+
+# Banner intermediate (regenerate via scripts/capture_banner.py)
+docs/images/dashboard_full.png
 
 # Testing
 .pytest_cache/

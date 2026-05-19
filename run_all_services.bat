@@ -1,72 +1,60 @@
 @echo off
-REM Run all services locally without Docker (Windows)
+REM Run all services locally (Windows).
+REM Each service runs in its own window with the `main` conda env activated.
 
 echo ==========================================
 echo   Starting ML Pipeline Services
 echo ==========================================
 echo.
 
-REM Check Python
+REM Check Python is available
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo X Python is not installed!
+    echo [X] Python is not installed!
     echo Please install Python 3.9+ from python.org
     pause
     exit /b 1
 )
 
-echo + Python is installed
+echo [+] Python found
 python --version
 echo.
 
-REM Create directories
-echo Creating directories...
+REM Ensure runtime directories exist
 if not exist data mkdir data
 if not exist logs mkdir logs
 if not exist models mkdir models
-echo + Directories created
+
+REM Start each service in a separate window
+echo Starting 5 services (5 new windows)...
 echo.
 
-REM Start services in separate windows
-echo Starting services...
-echo This will open 5 windows, one for each service.
-echo.
-
-start "Ingestion API - Port 8001" cmd /k "cd /d %CD% && conda activate && python services/ingestion_api/app.py"
+start "Ingestion API - Port 8001" cmd /k "cd /d %CD% && conda activate main && python services/ingestion_api/app.py"
 timeout /t 2 /nobreak >nul
 
-start "Prediction Service - Port 8002" cmd /k "cd /d %CD% && conda activate && python services/prediction_service/app.py"
+start "Prediction Service - Port 8002" cmd /k "cd /d %CD% && conda activate main && python services/prediction_service/app.py"
 timeout /t 2 /nobreak >nul
 
-start "Drift Monitor" cmd /k "cd /d %CD% && conda activate && python services/drift_monitor/monitor.py"
+start "Drift Monitor" cmd /k "cd /d %CD% && conda activate main && python services/drift_monitor/monitor.py"
 timeout /t 2 /nobreak >nul
 
-start "Retraining Worker" cmd /k "cd /d %CD% && conda activate && python services/retraining_worker/worker.py"
+start "Retraining Worker" cmd /k "cd /d %CD% && conda activate main && python services/retraining_worker/worker.py"
 timeout /t 2 /nobreak >nul
 
-start "Dashboard - Port 8050" cmd /k "cd /d %CD% && conda activate && python dashboards/monitoring_app.py"
+start "Dashboard - Port 8050" cmd /k "cd /d %CD% && conda activate main && python dashboards/monitoring_app.py"
 
 echo.
 echo ==========================================
-echo   All Services Started!
+echo   All Services Started
 echo ==========================================
 echo.
-echo Services running:
-echo   1. Ingestion API - http://localhost:8001
-echo   2. Prediction Service - http://localhost:8002
-echo   3. Drift Monitor (Background)
-echo   4. Retraining Worker (Background)
-echo   5. Dashboard - http://localhost:8050
+echo Endpoints:
+echo   - Ingestion API:      http://localhost:8001
+echo   - Prediction Service: http://localhost:8002
+echo   - Dashboard:          http://localhost:8050
 echo.
-echo Wait 10-15 seconds for initialization...
+echo Wait ~10 seconds for services to initialise, then visit the dashboard.
 echo.
-echo Then run in NEW terminal:
-echo   conda activate ml-pipeline
-echo   python demo.py
-echo.
-echo Dashboard: http://localhost:8050
-echo.
-echo To stop: run stop_all_services.bat
-echo For help: see README.md
+echo To stop everything: stop_all_services.bat
 echo.
 pause

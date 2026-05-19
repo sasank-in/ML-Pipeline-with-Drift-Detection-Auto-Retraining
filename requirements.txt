@@ -5,6 +5,7 @@ scipy
 joblib
 flask
 flask-cors
+waitress
 dash
 plotly
 pytest

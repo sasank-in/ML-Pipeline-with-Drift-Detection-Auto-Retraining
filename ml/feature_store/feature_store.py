@@ -1,9 +1,4 @@
 """Feature Store for managing features"""
-import sys
-import os
-# Add project root to Python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-
 from shared.database import DatabaseManager
 from shared.logger import setup_logger
 

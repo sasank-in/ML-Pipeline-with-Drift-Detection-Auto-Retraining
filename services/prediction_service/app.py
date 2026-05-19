@@ -3,8 +3,9 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify
 from flask_cors import CORS
+from markupsafe import escape
 import numpy as np
 import joblib
 import time
@@ -14,9 +15,16 @@ import json
 from shared.config import Config
 from shared.logger import setup_logger
 from shared.database import DatabaseManager
+from shared.auth import require_api_key
+from shared.web_ui import base_style, nav_html
 
 app = Flask(__name__)
-CORS(app)
+app.config['MAX_CONTENT_LENGTH'] = int(os.getenv('MAX_CONTENT_LENGTH', 10 * 1024 * 1024))
+_cors_origins = os.getenv('CORS_ORIGINS', '').strip()
+if _cors_origins:
+    CORS(app, origins=[o.strip() for o in _cors_origins.split(',') if o.strip()])
+else:
+    CORS(app, origins=[])
 
 config = Config()
 logger = setup_logger("prediction_service")
@@ -25,71 +33,49 @@ db = DatabaseManager()
 current_model = None
 model_version = None
 model_path = None
-total_predictions = 0
 
-BASE_STYLE = """
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Mono&display=swap');
-    :root {
-        --ink: #0b1220;
-        --paper: #f7f4ef;
-        --violet: #7c3aed;
-        --electric: #22d3ee;
-        --amber: #f59e0b;
-        --rose: #fb7185;
-        --shadow: 0 20px 40px rgba(12, 17, 29, 0.12);
-    }
-    * { box-sizing: border-box; }
-    body { font-family: 'Space Grotesk', sans-serif; margin: 0; background: radial-gradient(1200px 600px at 90% -10%, #efe7ff 0%, #f7f4ef 45%, #f3efe7 100%); color: var(--ink); }
-    .nav { background: linear-gradient(120deg, #0f172a 0%, #2b1d4a 60%, #0b1220 100%); padding: 16px 40px; position: sticky; top: 0; z-index: 10; }
-    .nav a { color: white; text-decoration: none; margin-right: 12px; padding: 10px 16px; border-radius: 999px; font-weight: 600; letter-spacing: 0.2px; transition: all 0.2s ease; }
-    .nav a:hover { background: rgba(255,255,255,0.12); transform: translateY(-1px); }
-    .nav a.active { background: linear-gradient(135deg, var(--violet), #4f46e5); }
-    .container { max-width: 980px; margin: 28px auto; background: rgba(255, 255, 255, 0.74); backdrop-filter: blur(8px); padding: 32px; border-radius: 18px; box-shadow: var(--shadow); border: 1px solid rgba(12, 17, 29, 0.06); animation: fadeUp 0.6s ease both; }
-    h1 { color: var(--ink); border-bottom: 3px solid var(--violet); padding-bottom: 10px; margin-top: 0; font-size: 28px; letter-spacing: 0.3px; }
-    .status { background: linear-gradient(120deg, #34d399, #10b981); color: #042019; padding: 6px 16px; border-radius: 999px; display: inline-block; font-weight: 700; }
-    .status.warning { background: linear-gradient(120deg, #f43f5e, #fb7185); color: #1f0a0a; }
-    .stats { display: flex; gap: 18px; margin: 22px 0; }
-    .stat-box { background: #0f172a; color: white; padding: 20px; border-radius: 16px; text-align: left; flex: 1; box-shadow: 0 12px 24px rgba(16, 24, 39, 0.18); animation: glowIn 0.6s ease both; }
-    .stat-box h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px; opacity: 0.7; }
-    .stat-box p { margin: 10px 0 0 0; font-size: 28px; font-weight: 700; }
-    .stat-box.alt { background: linear-gradient(135deg, #1f1147, #4c1d95); }
-    .form-group { margin: 16px 0; }
-    .form-group label { display: block; margin-bottom: 6px; font-weight: 600; color: #2b2f3a; }
-    textarea, input { width: 100%; padding: 12px; border: 1px solid rgba(12, 17, 29, 0.12); border-radius: 12px; font-family: 'IBM Plex Mono', monospace; background: white; }
-    textarea { height: 140px; }
-    button { background: linear-gradient(135deg, var(--violet), #3b82f6); color: white; border: none; padding: 12px 24px; border-radius: 12px; cursor: pointer; font-size: 14px; font-weight: 700; letter-spacing: 0.3px; box-shadow: 0 10px 20px rgba(124, 58, 237, 0.25); transition: transform 0.2s ease, box-shadow 0.2s ease; }
-    button:hover { transform: translateY(-2px); box-shadow: 0 16px 28px rgba(124, 58, 237, 0.35); }
-    .result { background: #0b1220; color: #c7f9cc; padding: 16px; border-radius: 12px; margin-top: 15px; font-family: 'IBM Plex Mono', monospace; white-space: pre-wrap; }
-    .error { color: var(--rose); }
-    .success { color: #34d399; }
-    table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-    th, td { padding: 12px; text-align: left; border-bottom: 1px solid rgba(12, 17, 29, 0.08); }
-    th { background: #111827; color: white; border-radius: 8px; }
-    tr:hover { background: rgba(124, 58, 237, 0.08); }
-    .model-info { background: linear-gradient(135deg, #111827, #1f2937); color: white; padding: 20px; border-radius: 14px; margin: 20px 0; box-shadow: 0 12px 24px rgba(16, 24, 39, 0.18); }
-    .prediction-result { background: linear-gradient(135deg, #10b981, #22d3ee); color: #052316; padding: 20px; border-radius: 14px; margin: 20px 0; }
-    .prediction-result h3 { margin-top: 0; }
-    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-    @keyframes glowIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-    @media (max-width: 900px) { .stats { flex-direction: column; } .nav { padding: 12px 18px; } .container { margin: 18px; } }
-</style>
-"""
+MODELS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..', 'models'))
 
-NAV_HTML = """
-<div class="nav">
-    <a href="/" class="{home}">Home</a>
-    <a href="/health" class="{health}">Health</a>
-    <a href="/predict" class="{predict}">Predict</a>
-    <a href="/reload_model" class="{reload}">Reload Model</a>
-</div>
-"""
+
+def _is_safe_model_path(path: str) -> bool:
+    """Reject paths outside the models/ directory or with non-.pkl extensions.
+
+    Mitigates arbitrary-file pickle deserialization if the model registry is tampered with.
+    """
+    try:
+        resolved = os.path.abspath(path)
+        return resolved.startswith(MODELS_DIR + os.sep) and resolved.endswith('.pkl')
+    except Exception:
+        return False
+
+BASE_STYLE = base_style({
+    "accent": "#7c3aed",       # violet
+    "accent_alt": "#4f46e5",   # indigo
+    "bg_glow": "#efe7ff",
+    "nav_a": "#0f172a",
+    "nav_b": "#2b1d4a",
+})
+
+_NAV_LINKS = [
+    ("/", "Home"),
+    ("/health", "Health"),
+    ("/predict", "Predict"),
+    ("/reload_model", "Reload Model"),
+]
+
+
+def _nav(active: str) -> str:
+    return nav_html(_NAV_LINKS, active=active)
 
 
 def load_model_from_path(path: str, version: str = None) -> bool:
-    """Load a model from disk."""
+    """Load a model from disk. Refuses paths outside models/ to limit pickle risk."""
     global current_model, model_version, model_path
-    
+
+    if not _is_safe_model_path(path):
+        logger.error(f"Refusing to load model from untrusted path: {path}")
+        return False
+
     try:
         model_data = joblib.load(path)
         current_model = model_data['model']
@@ -134,13 +120,17 @@ def maybe_reload_model():
 def index():
     model_status = "Loaded" if current_model else "Not Loaded"
     status_class = "" if current_model else "warning"
+    try:
+        total_predictions = db.count_predictions()
+    except Exception:
+        total_predictions = 0
     
     html = f"""
     <!DOCTYPE html>
     <html>
     <head><title>Prediction Service - Home</title>{BASE_STYLE}</head>
     <body>
-        {NAV_HTML.format(home='active', health='', predict='', reload='')}
+        {_nav('/')}
         <div class="container">
             <h1>Prediction Service</h1>
             <span class="status {status_class}">{model_status}</span>
@@ -153,7 +143,7 @@ def index():
                 </div>
                 <div class="stat-box alt">
                     <h3>Model Version</h3>
-                    <p style="font-size: 16px;">{model_version or 'None'}</p>
+                    <p style="font-size: 16px;">{escape(model_version or 'None')}</p>
                 </div>
             </div>
             
@@ -173,31 +163,43 @@ def index():
 
 @app.route('/health', methods=['GET'])
 def health_check():
+    db_ok = db.ping()
+    model_ok = current_model is not None
+    # Healthy = DB up AND model loaded. Degraded if either fails.
+    overall = 'healthy' if (db_ok and model_ok) else 'degraded'
+    status_code = 200 if overall == 'healthy' else 503
     response = {
-        'status': 'healthy',
+        'status': overall,
         'service': 'prediction_service',
-        'model_loaded': current_model is not None,
-        'model_version': model_version
+        'model_loaded': model_ok,
+        'model_version': model_version,
+        'checks': {
+            'database': 'ok' if db_ok else 'fail',
+            'model': 'ok' if model_ok else 'fail',
+        },
     }
+    if request.headers.get('Accept', '').find('application/json') != -1:
+        return jsonify(response), status_code
     
     if request.headers.get('Accept', '').find('application/json') != -1:
         return jsonify(response)
     
     model_status = "Loaded" if current_model else "Not Loaded"
     status_color = "#27ae60" if current_model else "#e74c3c"
-    
+    overall_color = "#27ae60" if overall == 'healthy' else "#e74c3c"
+
     html = f"""
     <!DOCTYPE html>
     <html>
     <head><title>Prediction Service - Health</title>{BASE_STYLE}</head>
     <body>
-        {NAV_HTML.format(home='', health='active', predict='', reload='')}
+        {_nav('/health')}
         <div class="container">
             <h1>Health Check</h1>
             <div class="stats">
-                <div class="stat-box" style="background: #27ae60;">
+                <div class="stat-box" style="background: {overall_color};">
                     <h3>Status</h3>
-                    <p>Healthy</p>
+                    <p>{overall.capitalize()}</p>
                 </div>
                 <div class="stat-box" style="background: {status_color};">
                     <h3>Model</h3>
@@ -205,7 +207,7 @@ def health_check():
                 </div>
                 <div class="stat-box">
                     <h3>Version</h3>
-                    <p style="font-size: 16px;">{model_version or 'None'}</p>
+                    <p style="font-size: 16px;">{escape(model_version or 'None')}</p>
                 </div>
             </div>
             <h2>JSON Response</h2>
@@ -218,8 +220,9 @@ def health_check():
 
 
 @app.route('/predict', methods=['GET', 'POST'])
+@require_api_key
 def predict():
-    global current_model, total_predictions
+    global current_model
     result_html = ""
     
     if request.method == 'POST':
@@ -242,13 +245,18 @@ def predict():
                 X = np.array(data['features'])
                 if len(X.shape) == 1:
                     X = X.reshape(1, -1)
+
+                max_rows = int(os.getenv('MAX_PREDICT_ROWS', '1000'))
+                if X.shape[0] > max_rows:
+                    msg = f'Too many rows: {X.shape[0]} > {max_rows}'
+                    if request.is_json:
+                        return jsonify({'status': 'error', 'message': msg}), 413
+                    return f'<div class="result error">Error: {msg}</div>', 413
                 
                 start_time = time.time()
                 predictions = current_model.predict(X)
                 probabilities = current_model.predict_proba(X)
                 prediction_time = time.time() - start_time
-                
-                total_predictions += len(predictions)
                 
                 for i, (pred, prob) in enumerate(zip(predictions, probabilities)):
                     db.log_prediction(
@@ -275,23 +283,22 @@ def predict():
                 if request.is_json:
                     return jsonify(response)
                 
-                pred_labels = ['Regular Customer' if p == 0 else 'High-Value Customer' for p in predictions]
+                confidences = [round(max(p), 4) for p in probabilities.tolist()]
                 result_html = f"""
                 <div class="prediction-result">
                     <h3>Prediction Results</h3>
-                    <p><strong>Predictions:</strong> {pred_labels}</p>
-                    <p><strong>Raw Values:</strong> {predictions.tolist()}</p>
-                    <p><strong>Confidence:</strong> {[round(max(p), 4) for p in probabilities.tolist()]}</p>
+                    <p><strong>Predictions:</strong> {escape(str(predictions.tolist()))}</p>
+                    <p><strong>Confidence:</strong> {escape(str(confidences))}</p>
                     <p><strong>Time:</strong> {round(prediction_time, 4)}s</p>
                 </div>
                 <h3>Full JSON Response</h3>
-                <div class="result">{json.dumps(response, indent=2)}</div>
+                <div class="result">{escape(json.dumps(response, indent=2))}</div>
                 """
                 
             except Exception as e:
                 if request.is_json:
                     return jsonify({'status': 'error', 'message': str(e)}), 500
-                result_html = f'<div class="result error">Error: {str(e)}</div>'
+                result_html = f'<div class="result error">Error: {escape(str(e))}</div>'
     
     sample_data = json.dumps({
         "features": [[0.5, -0.3, 1.2, 0.8, -0.5, 0.1, 0.9, -0.2]]
@@ -299,11 +306,15 @@ def predict():
     
     model_info = ""
     if current_model:
+        n_features = getattr(current_model, 'n_features_in_', None)
+        classes = getattr(current_model, 'classes_', None)
+        n_features_str = f"{n_features}" if n_features is not None else "unknown"
+        classes_str = escape(str(list(classes))) if classes is not None else "unknown"
         model_info = f"""
         <div class="model-info">
-            <h3>Current Model: {model_version}</h3>
-            <p>Features expected: 8 (Recency, Frequency, TotalItems, UniqueProducts, AvgOrderValue, AvgItemsPerOrder, AvgItemPrice, CountryEncoded)</p>
-            <p>Output: 0 = Regular Customer, 1 = High-Value Customer</p>
+            <h3>Current Model: {escape(model_version)}</h3>
+            <p>Features expected: {n_features_str}</p>
+            <p>Output classes: {classes_str}</p>
         </div>
         """
     
@@ -312,7 +323,7 @@ def predict():
     <html>
     <head><title>Prediction Service - Predict</title>{BASE_STYLE}</head>
     <body>
-        {NAV_HTML.format(home='', health='', predict='active', reload='')}
+        {_nav('/predict')}
         <div class="container">
             <h1>Make Predictions</h1>
             {model_info}
@@ -336,6 +347,7 @@ def predict():
 
 
 @app.route('/reload_model', methods=['GET', 'POST'])
+@require_api_key
 def reload_model_endpoint():
     result_html = ""
     
@@ -353,17 +365,17 @@ def reload_model_endpoint():
             result_html = f'<div class="result error">{json.dumps(response, indent=2)}</div>'
     
     model_files = glob.glob('models/*.pkl')
-    files_html = "<ul>" + "".join([f"<li>{os.path.basename(f)}</li>" for f in model_files]) + "</ul>" if model_files else "<p>No model files found</p>"
+    files_html = "<ul>" + "".join([f"<li>{escape(os.path.basename(f))}</li>" for f in model_files]) + "</ul>" if model_files else "<p>No model files found</p>"
     
     html = f"""
     <!DOCTYPE html>
     <html>
     <head><title>Prediction Service - Reload Model</title>{BASE_STYLE}</head>
     <body>
-        {NAV_HTML.format(home='', health='', predict='', reload='active')}
+        {_nav('/reload_model')}
         <div class="container">
             <h1>Reload Model</h1>
-            <p>Current model: <strong>{model_version or 'None'}</strong></p>
+            <p>Current model: <strong>{escape(model_version or 'None')}</strong></p>
             
             <h2>Available Models</h2>
             {files_html}
@@ -381,5 +393,12 @@ def reload_model_endpoint():
 
 if __name__ == '__main__':
     load_model()
-    logger.info(f"Starting Prediction Service on port {config.service.prediction_port}")
-    app.run(host='0.0.0.0', port=config.service.prediction_port, debug=False)
+    port = config.service.prediction_port
+    host = os.getenv('BIND_HOST', '127.0.0.1')
+    logger.info(f"Starting Prediction Service on {host}:{port}")
+    try:
+        from waitress import serve
+        serve(app, host=host, port=port, threads=int(os.getenv('WAITRESS_THREADS', '8')))
+    except ImportError:
+        logger.warning("waitress not installed — falling back to Flask dev server")
+        app.run(host=host, port=port, debug=False)
